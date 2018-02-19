@@ -21,6 +21,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.DatePickerDialog.OnDateSetListener;
 import android.app.TimePickerDialog.OnTimeSetListener;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
@@ -47,11 +48,13 @@ import android.support.v4.app.FragmentTransaction;
 import android.support.v4.util.Pair;
 import android.support.v4.view.MenuItemCompat;
 import android.support.v4.widget.DrawerLayout;
+import android.support.v7.app.AlertDialog;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.SparseArray;
 import android.view.*;
 import android.view.View.OnClickListener;
 import android.view.View.OnTouchListener;
@@ -65,6 +68,23 @@ import butterknife.ButterKnife;
 import com.afollestad.materialdialogs.DialogAction;
 import com.afollestad.materialdialogs.MaterialDialog;
 import com.bumptech.glide.load.resource.bitmap.GlideBitmapDrawable;
+import com.google.android.gms.vision.Frame;
+import com.google.android.gms.vision.text.TextBlock;
+import com.google.android.gms.vision.text.TextRecognizer;
+import com.google.api.client.extensions.android.http.AndroidHttp;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.json.JsonFactory;
+import com.google.api.client.json.gson.GsonFactory;
+import com.google.api.services.vision.v1.Vision;
+import com.google.api.services.vision.v1.VisionRequest;
+import com.google.api.services.vision.v1.VisionRequestInitializer;
+import com.google.api.services.vision.v1.model.AnnotateImageRequest;
+import com.google.api.services.vision.v1.model.BatchAnnotateImagesRequest;
+import com.google.api.services.vision.v1.model.BatchAnnotateImagesResponse;
+import com.google.api.services.vision.v1.model.EntityAnnotation;
+import com.google.api.services.vision.v1.model.Feature;
+import com.google.api.services.vision.v1.model.Image;
 import com.neopixl.pixlui.components.edittext.EditText;
 import com.neopixl.pixlui.components.textview.TextView;
 import com.pushbullet.android.extension.MessagingExtension;
@@ -101,15 +121,22 @@ import it.feio.android.omninotes.utils.date.ReminderPickers;
 import it.feio.android.pixlui.links.TextLinkClickListener;
 import org.apache.commons.lang.StringUtils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 import static com.nineoldandroids.view.ViewPropertyAnimator.animate;
+import static it.feio.android.omninotes.utils.Constants.TAG;
 import static java.lang.Integer.parseInt;
 import static java.lang.Long.parseLong;
 
@@ -125,6 +152,10 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 	private static final int CATEGORY = 5;
 	private static final int DETAIL = 6;
 	private static final int FILES = 7;
+
+
+	private static final String ANDROID_CERT_HEADER = "X-Android-Cert";
+	private static final String ANDROID_PACKAGE_HEADER = "X-Android-Package";
 
 	@BindView(R.id.detail_root)
 	ViewGroup root;
@@ -450,7 +481,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 							noteTmp = new Note();
 							noteTmp.setCategory(category);
 						} catch (NumberFormatException e) {
-							Log.e(Constants.TAG, "Category with not-numeric value!", e);
+							Log.e(TAG, "Category with not-numeric value!", e);
 						}
 					}
 				}
@@ -778,7 +809,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 				takeSketch(mAttachmentAdapter.getItem(attachmentPosition));
 				break;
 			default:
-				Log.w(Constants.TAG, "No action available");
+				Log.w(TAG, "No action available");
 		}
 	}
 
@@ -1145,7 +1176,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 			case R.id.menu_delete:
 				deleteNote();
 				break;
-			default: Log.w(Constants.TAG, "Invalid menu option selected");
+			default: Log.w(TAG, "Invalid menu option selected");
 		}
 
 		((OmniNotes)getActivity().getApplication()).getAnalyticsHelper().trackActionFromResourceId(getActivity(), item.getItemId());
@@ -1240,7 +1271,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 		try {
 			newView = mChecklistManager.convert(toggleChecklistView);
 		} catch (ViewNotSupportedException e) {
-			Log.e(Constants.TAG, "Error switching checklist view", e);
+			Log.e(TAG, "Error switching checklist view", e);
 		}
 
 		// Switches the views
@@ -1443,6 +1474,45 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 					addAttachment(attachment);
 					mAttachmentAdapter.notifyDataSetChanged();
 					mGridView.autoresize();
+					AlertDialog.Builder builder = new AlertDialog.Builder(mainActivity);
+					builder.setTitle("Google Cloud Vision Detection Type");
+					builder.setItems(new CharSequence[]
+									{"Label Detection", "Text Detection", "Document Text",
+											"Face Detection", "Image Properties", "Landmark Detection",
+											"Logo Detection", "Safe Search Detection"},
+							new DialogInterface.OnClickListener() {
+								public void onClick(DialogInterface dialog, int which) {
+									// The 'which' argument contains the index position
+									// of the selected item
+									switch (which) {
+										case 0:
+											uploadImage(attachmentUri, "LABEL_DETECTION");
+											break;
+										case 1:
+											uploadImage(attachmentUri, "TEXT_DETECTION");
+											break;
+										case 2:
+											uploadImage(attachmentUri, "DOCUMENT_TEXT_DETECTION");
+											break;
+										case 3:
+											uploadImage(attachmentUri, "FACE_DETECTION");
+											break;
+										case 4:
+											uploadImage(attachmentUri, "IMAGE_PROPERTIES");
+											break;
+										case 5:
+											uploadImage(attachmentUri, "LANDMARK_DETECTION");
+											break;
+										case 6:
+											uploadImage(attachmentUri, "LOGO_DETECTION");
+											break;
+										case 7:
+											uploadImage(attachmentUri, "SAFE_SEARCH_DETECTION");
+											break;
+									}
+								}
+							});
+					builder.create().show();
 					break;
 				case TAKE_VIDEO:
 					// Gingerbread doesn't allow custom folder so data are retrieved from intent
@@ -1478,7 +1548,79 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 					mainActivity.showMessage(R.string.note_updated, ONStyle.CONFIRM);
 					break;
 				default:
-					Log.e(Constants.TAG, "Wrong element choosen: " + requestCode);
+					Log.e(TAG, "Wrong element choosen: " + requestCode);
+			}
+		}
+	}
+
+
+	private void inspectFromBitmap(Bitmap bitmap) {
+		TextRecognizer textRecognizer = new TextRecognizer.Builder(mainActivity).build();
+		try {
+			if (!textRecognizer.isOperational()) {
+				new AlertDialog.
+						Builder(mainActivity).
+						setMessage("Text recognizer could not be set up on your device").show();
+				return;
+			}
+
+			Frame frame = new Frame.Builder().setBitmap(bitmap).build();
+			SparseArray<TextBlock> origTextBlocks = textRecognizer.detect(frame);
+			List<TextBlock> textBlocks = new ArrayList<>();
+			for (int i = 0; i < origTextBlocks.size(); i++) {
+				TextBlock textBlock = origTextBlocks.valueAt(i);
+				textBlocks.add(textBlock);
+			}
+			Collections.sort(textBlocks, new Comparator<TextBlock>() {
+				@Override
+				public int compare(TextBlock o1, TextBlock o2) {
+					int diffOfTops = o1.getBoundingBox().top - o2.getBoundingBox().top;
+					int diffOfLefts = o1.getBoundingBox().left - o2.getBoundingBox().left;
+					if (diffOfTops != 0) {
+						return diffOfTops;
+					}
+					return diffOfLefts;
+				}
+			});
+
+			StringBuilder detectedText = new StringBuilder();
+			for (TextBlock textBlock : textBlocks) {
+				if (textBlock != null && textBlock.getValue() != null) {
+					detectedText.append(textBlock.getValue());
+					detectedText.append("\n");
+				}
+			}
+
+			content.setText(detectedText);
+		}
+		finally {
+			textRecognizer.release();
+		}
+	}
+
+	private void runGoogleOcr(Uri uri) {
+		InputStream is = null;
+		Bitmap bitmap = null;
+		try {
+			is = mainActivity.getContentResolver().openInputStream(uri);
+			BitmapFactory.Options options = new BitmapFactory.Options();
+			options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+			options.inSampleSize = 2;
+			options.inScreenDensity = DisplayMetrics.DENSITY_LOW;
+			bitmap = BitmapFactory.decodeStream(is, null, options);
+			inspectFromBitmap(bitmap);
+		} catch (FileNotFoundException e) {
+			Log.w(TAG, "Failed to find the file: " + uri, e);
+		} finally {
+			if (bitmap != null) {
+				bitmap.recycle();
+			}
+			if (is != null) {
+				try {
+					is.close();
+				} catch (IOException e) {
+					Log.w(TAG, "Failed to close InputStream", e);
+				}
 			}
 		}
 	}
@@ -1576,7 +1718,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 					@Override
 					public void onPositive(MaterialDialog materialDialog) {
 						mainActivity.deleteNote(noteTmp);
-						Log.d(Constants.TAG, "Deleted note with id '" + noteTmp.get_id() + "'");
+						Log.d(TAG, "Deleted note with id '" + noteTmp.get_id() + "'");
 						mainActivity.showMessage(R.string.note_deleted, ONStyle.ALERT);
 						goHome();
 					}
@@ -1607,7 +1749,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 		// is an empty note
 		if (goBack && TextUtils.isEmpty(noteTmp.getTitle()) && TextUtils.isEmpty(noteTmp.getContent())
 				&& noteTmp.getAttachmentsList().size() == 0) {
-			Log.d(Constants.TAG, "Empty note not saved");
+			Log.d(TAG, "Empty note not saved");
 			exitMessage = getString(R.string.empty_note_not_saved);
 			exitCroutonStyle = ONStyle.INFO;
 			goHome();
@@ -1729,7 +1871,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 	 * Notes locking with security password to avoid viewing, editing or deleting from unauthorized
 	 */
 	private void lockNote() {
-		Log.d(Constants.TAG, "Locking or unlocking note " + note.get_id());
+		Log.d(TAG, "Locking or unlocking note " + note.get_id());
 
 		// If security password is not set yes will be set right now
 		if (prefs.getString(Constants.PREF_PASSWORD, null) == null) {
@@ -1839,7 +1981,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 				}
 			});
 		} catch (IOException e) {
-			Log.e(Constants.TAG, "prepare() failed", e);
+			Log.e(TAG, "prepare() failed", e);
 			mainActivity.showMessage(R.string.error, ONStyle.ALERT);
 		}
 	}
@@ -1888,7 +2030,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 						mRecorder.prepare();
 						mRecorder.start();
 					} catch (IOException | IllegalStateException e) {
-						Log.e(Constants.TAG, "prepare() failed", e);
+						Log.e(TAG, "prepare() failed", e);
 						mainActivity.showMessage(R.string.error, ONStyle.ALERT);
 					}
 				});
@@ -2023,7 +2165,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 		switch (event.getAction()) {
 
 			case MotionEvent.ACTION_DOWN:
-				Log.v(Constants.TAG, "MotionEvent.ACTION_DOWN");
+				Log.v(TAG, "MotionEvent.ACTION_DOWN");
 				int w;
 
 				Point displaySize = Display.getUsableSize(mainActivity);
@@ -2037,14 +2179,14 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 				break;
 
 			case MotionEvent.ACTION_UP:
-				Log.v(Constants.TAG, "MotionEvent.ACTION_UP");
+				Log.v(TAG, "MotionEvent.ACTION_UP");
 				if (swiping)
 					swiping = false;
 				break;
 
 			case MotionEvent.ACTION_MOVE:
 				if (swiping) {
-					Log.v(Constants.TAG, "MotionEvent.ACTION_MOVE at position " + x + ", " + y);
+					Log.v(TAG, "MotionEvent.ACTION_MOVE at position " + x + ", " + y);
 					if (Math.abs(x - startSwipeX) > Constants.SWIPE_OFFSET) {
 						swiping = false;
 						FragmentTransaction transaction = mainActivity.getSupportFragmentManager().beginTransaction();
@@ -2061,7 +2203,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 				break;
 
 			default:
-				Log.e(Constants.TAG, "Wrong element choosen: " + event.getAction());
+				Log.e(TAG, "Wrong element choosen: " + event.getAction());
 		}
 
 		return true;
@@ -2168,7 +2310,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 	public void onRecurrenceReminderPicked(String recurrenceRule) {
 		noteTmp.setRecurrenceRule(recurrenceRule);
 		if (!TextUtils.isEmpty(recurrenceRule)) {
-			Log.d(Constants.TAG, "Recurrent reminder set: " + recurrenceRule);
+			Log.d(TAG, "Recurrent reminder set: " + recurrenceRule);
 			datetime.setText(DateHelper.getNoteRecurrentReminderText(parseLong(noteTmp
 					.getAlarm()), recurrenceRule));
 		}
@@ -2383,7 +2525,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 					attachmentDialog.dismiss();
 					break;
 				default:
-					Log.e(Constants.TAG, "Wrong element choosen: " + v.getId());
+					Log.e(TAG, "Wrong element choosen: " + v.getId());
 			}
 		}
 	}
@@ -2391,6 +2533,158 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 
 	public void onEventMainThread(PushbulletReplyEvent pushbulletReplyEvent) {
 		content.setText(getNoteContent() + System.getProperty("line.separator") + pushbulletReplyEvent.message);
+	}
+
+
+	public void uploadImage(Uri uri, String type) {
+		if (uri != null) {
+			try {
+				// scale the image to save on bandwidth
+				Bitmap bitmap =
+						scaleBitmapDown(
+								MediaStore.Images.Media.getBitmap(mainActivity.getContentResolver(), uri),
+								1200);
+
+				callCloudVision(bitmap, type);
+				//mMainImage.setImageBitmap(bitmap);
+
+			} catch (IOException e) {
+				Log.d(TAG, "Image picking failed because " + e.getMessage());
+				//Toast.makeText(this, R.string.image_picker_error, Toast.LENGTH_LONG).show();
+			}
+		} else {
+			Log.d(TAG, "Image picker gave us a null image.");
+			//Toast.makeText(this, R.string.image_picker_error, Toast.LENGTH_LONG).show();
+		}
+	}
+
+	private void callCloudVision(final Bitmap bitmap, String type) throws IOException {
+		// Switch text to loading
+		//content.setText(R.string.loading_message);
+
+		// Do the real work in an async task, because we need to use the network anyway
+		new AsyncTask<Object, Void, String>() {
+			@Override
+			protected String doInBackground(Object... params) {
+				try {
+					HttpTransport httpTransport = AndroidHttp.newCompatibleTransport();
+					JsonFactory jsonFactory = GsonFactory.getDefaultInstance();
+
+					VisionRequestInitializer requestInitializer =
+							new VisionRequestInitializer(getString(R.string.vision_api_key)) {
+								/**
+								 * We override this so we can inject important identifying fields into the HTTP
+								 * headers. This enables use of a restricted cloud platform API key.
+								 */
+								@Override
+								protected void initializeVisionRequest(VisionRequest<?> visionRequest)
+										throws IOException {
+									super.initializeVisionRequest(visionRequest);
+
+									String packageName = mainActivity.getPackageName();
+									visionRequest.getRequestHeaders().set(ANDROID_PACKAGE_HEADER, packageName);
+
+									String sig = PackageManagerUtils.getSignature(mainActivity.getPackageManager(), packageName);
+
+									visionRequest.getRequestHeaders().set(ANDROID_CERT_HEADER, sig);
+								}
+							};
+
+					Vision.Builder builder = new Vision.Builder(httpTransport, jsonFactory, null);
+					builder.setVisionRequestInitializer(requestInitializer);
+
+					Vision vision = builder.build();
+
+					BatchAnnotateImagesRequest batchAnnotateImagesRequest =
+							new BatchAnnotateImagesRequest();
+
+					batchAnnotateImagesRequest.setRequests(new ArrayList<AnnotateImageRequest>() {{
+						AnnotateImageRequest annotateImageRequest = new AnnotateImageRequest();
+
+						// Add the image
+						Image base64EncodedImage = new Image();
+						// Convert the bitmap to a JPEG
+						// Just in case it's a format that Android understands but Cloud Vision
+						ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+						bitmap.compress(Bitmap.CompressFormat.JPEG, 90, byteArrayOutputStream);
+						byte[] imageBytes = byteArrayOutputStream.toByteArray();
+
+						// Base64 encode the JPEG
+						base64EncodedImage.encodeContent(imageBytes);
+						annotateImageRequest.setImage(base64EncodedImage);
+
+						// add the features we want
+						annotateImageRequest.setFeatures(new ArrayList<Feature>() {{
+							Feature textDetection = new Feature();
+							textDetection.setType(type);
+							textDetection.setMaxResults(10);
+							add(textDetection);
+						}});
+
+
+						// Add the list of one thing to the request
+						add(annotateImageRequest);
+					}});
+
+					Vision.Images.Annotate annotateRequest =
+							vision.images().annotate(batchAnnotateImagesRequest);
+					// Due to a bug: requests to Vision API containing large images fail when GZipped.
+					annotateRequest.setDisableGZipContent(true);
+					Log.d(TAG, "created Cloud Vision request object, sending request");
+
+
+					BatchAnnotateImagesResponse response = annotateRequest.execute();
+					return convertResponseToString(response);
+
+				} catch (GoogleJsonResponseException e) {
+					Log.d(TAG, "failed to make API request because " + e.getContent());
+				} catch (IOException e) {
+					Log.d(TAG, "failed to make API request because of other IOException " +
+							e.getMessage());
+				}
+				return "Cloud Vision API request failed. Check logs for details.";
+			}
+
+			protected void onPostExecute(String result) {
+				content.setText(result);
+			}
+		}.execute();
+	}
+
+	public Bitmap scaleBitmapDown(Bitmap bitmap, int maxDimension) {
+
+		int originalWidth = bitmap.getWidth();
+		int originalHeight = bitmap.getHeight();
+		int resizedWidth = maxDimension;
+		int resizedHeight = maxDimension;
+
+		if (originalHeight > originalWidth) {
+			resizedHeight = maxDimension;
+			resizedWidth = (int) (resizedHeight * (float) originalWidth / (float) originalHeight);
+		} else if (originalWidth > originalHeight) {
+			resizedWidth = maxDimension;
+			resizedHeight = (int) (resizedWidth * (float) originalHeight / (float) originalWidth);
+		} else if (originalHeight == originalWidth) {
+			resizedHeight = maxDimension;
+			resizedWidth = maxDimension;
+		}
+		return Bitmap.createScaledBitmap(bitmap, resizedWidth, resizedHeight, false);
+	}
+
+	private String convertResponseToString(BatchAnnotateImagesResponse response) {
+		String message = "I found these things:\n\n";
+
+		List<EntityAnnotation> labels = response.getResponses().get(0).getLabelAnnotations();
+		if (labels != null) {
+			for (EntityAnnotation label : labels) {
+				message += String.format(Locale.US, "%.3f: %s", label.getScore(), label.getDescription());
+				message += "\n";
+			}
+		} else {
+			message += "nothing";
+		}
+
+		return message;
 	}
 }
 

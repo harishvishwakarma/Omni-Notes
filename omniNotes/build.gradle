@@ -163,6 +163,11 @@ dependencies {
         transitive=false
     }
     compile 'com.github.federicoiosue:pixlui:2.6'
+    compile 'com.google.android.gms:play-services-vision:10.0.0'
+    compile 'com.google.api-client:google-api-client-android:1.20.0' exclude module: 'httpclient'
+    compile 'com.google.http-client:google-http-client-gson:1.20.0' exclude module: 'httpclient'
+
+    compile 'com.google.apis:google-api-services-vision:v1-rev2-1.21.0'
 
     // Flavors specific dependecies
     playCompile 'io.nlopez.smartlocation:library:3.2.4'
@@ -174,7 +179,7 @@ dependencies {
     fossCompile ('com.github.federicoiosue:analitica:0.0.3:piwikRelease@aar'){
         transitive=true
     }
-    playCompile 'com.google.android.gms:play-services-analytics:9.0.2'
+    playCompile 'com.google.android.gms:play-services-analytics:10.0.0'
     fossCompile ('org.piwik.sdk:piwik-sdk:1.0.2'){
         exclude group: 'com.jakewharton.timber', module: 'timber'
     }
