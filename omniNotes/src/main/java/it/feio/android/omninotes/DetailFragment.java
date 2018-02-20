@@ -85,6 +85,8 @@ import com.google.api.services.vision.v1.model.BatchAnnotateImagesResponse;
 import com.google.api.services.vision.v1.model.EntityAnnotation;
 import com.google.api.services.vision.v1.model.Feature;
 import com.google.api.services.vision.v1.model.Image;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.neopixl.pixlui.components.edittext.EditText;
 import com.neopixl.pixlui.components.textview.TextView;
 import com.pushbullet.android.extension.MessagingExtension;
@@ -2646,7 +2648,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 			}
 
 			protected void onPostExecute(String result) {
-				content.setText(result);
+				content.append("\n"+result);
 			}
 		}.execute();
 	}
@@ -2672,9 +2674,10 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 	}
 
 	private String convertResponseToString(BatchAnnotateImagesResponse response) {
-		String message = "I found these things:\n\n";
+		String message = response.toString();
+		//Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
-		List<EntityAnnotation> labels = response.getResponses().get(0).getLabelAnnotations();
+		/*List<EntityAnnotation> labels = response.getResponses().get(0).getLabelAnnotations();
 		if (labels != null) {
 			for (EntityAnnotation label : labels) {
 				message += String.format(Locale.US, "%.3f: %s", label.getScore(), label.getDescription());
@@ -2682,7 +2685,7 @@ public class DetailFragment extends BaseFragment implements OnReminderPickedList
 			}
 		} else {
 			message += "nothing";
-		}
+		}*/
 
 		return message;
 	}
